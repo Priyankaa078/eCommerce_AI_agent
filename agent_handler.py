@@ -9,6 +9,7 @@ from PIL import Image
 import io
 import requests
 from bs4 import BeautifulSoup
+import re
 
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -79,8 +80,27 @@ def search_client():
             text_blob = f"{(last_bought or '')} {(liked or '')} {(address or '')}".lower()
             matched_triggers = [t for t in triggers if t.lower() in text_blob]
             if matched_triggers:
-                reason = f"Matches craft triggers: {', '.join(matched_triggers)}"
+                # Use LLM to generate reason summary
+                reason_prompt = f"""
+                You are an expert product marketer.
+
+                Craft Product Triggers: {', '.join(matched_triggers)}
+                Client Details:
+                    - Name: {name}
+                    - Last Bought: {last_bought}
+                    - Liked Products: {liked}
+                    - Address: {address}
+
+                Write a short professional summary explaining why this client is a good match for the crafts.
+                """
+
+                reason = client.chat.completions.create(
+                    model="gpt-4o",  
+                    messages=[{"role": "user", "content": reason_prompt}]
+                ).choices[0].message.content.strip()
+
                 matched_clients.append((name, email if email else "NA", reason))
+
 
         print(f"{len(matched_clients)} clients matched.")
 
@@ -114,32 +134,33 @@ def search_client():
 @function_tool
 def message_framer(name: str, followup_query: str = "") -> str:
     """
-    Frames a personalized pitch message for the client (first message),
-    or responds to a follow-up query using client and craft data.
-    The most relevant craft is selected based on client's interest (reason).
+    Frames a personalized pitch message or follow-up reply using client and craft info.
+    Uses LLM to generate messages.
+    Also stores follow-up queries in chat_history.db as user messages.
     """
-    # Load client info
+
+    # Fetch client details
     try:
         conn_client = sqlite3.connect("potential_clients.db")
         cursor_client = conn_client.cursor()
-        cursor_client.execute("SELECT email, reason FROM clients WHERE customer_name = ?", (name,))
+        cursor_client.execute("SELECT email, reason FROM clients WHERE name = ?", (name,))
         result = cursor_client.fetchone()
         conn_client.close()
         if not result:
             return f"No data found for {name} in potential clients database."
         email, reason = result
-    except:
-        return f"Failed to fetch client data for {name}."
+    except Exception as e:
+        return f"Failed to fetch client data for {name}: {e}"
 
-    # Load crafts info
+    # Fetch crafts info 
     try:
-        conn_craft = sqlite3.connect("crafts.db")
+        conn_craft = sqlite3.connect("images.db")
         cursor_craft = conn_craft.cursor()
-        cursor_craft.execute("SELECT name, metadata FROM crafts")
+        cursor_craft.execute("SELECT image, metadata FROM images")
         crafts = cursor_craft.fetchall()
         conn_craft.close()
-    except:
-        return f"Failed to load crafts info."
+    except Exception as e:
+        return f"Failed to load crafts info: {e}"
 
     if not crafts:
         return f"No crafts found to reference."
@@ -149,7 +170,7 @@ def message_framer(name: str, followup_query: str = "") -> str:
     best_match = None
     best_score = 0
 
-    for craft_name, metadata_json in crafts:
+    for image_blob, metadata_json in crafts:
         metadata = json.loads(metadata_json)
         fields = [
             str(metadata.get("type", "")),
@@ -162,12 +183,12 @@ def message_framer(name: str, followup_query: str = "") -> str:
         match_score = sum(1 for field in fields if field.lower() in reason_lower)
         if match_score > best_score:
             best_score = match_score
-            best_match = (craft_name, metadata)
+            best_match = (image_blob, metadata)
 
     if not best_match:
-        craft_name, metadata = crafts[0]  # fallback to first craft
+        image_blob, metadata = crafts[0]  # fallback
     else:
-        craft_name, metadata = best_match
+        image_blob, metadata = best_match
 
     style = metadata.get("style", "unique")
     material = metadata.get("material", "premium material")
@@ -175,36 +196,73 @@ def message_framer(name: str, followup_query: str = "") -> str:
     handcrafted = metadata.get("handcrafted", "yes")
     color = metadata.get("color", "classic tone")
 
-    #  Message logic
+    # LLM-based message framing
+    product_details = f"""
+    Client Name: {name}
+    Product Details:
+        - Material: {material}
+        - Style: {style}
+        - Color: {color}
+        - Size: {estimated_size}
+        - Handcrafted: {handcrafted}
+    Reason for Interest: {reason}
+    """
+
     if not followup_query.strip():
-        # Initial pitch
-        message = (
-            f"Hi {name},\n\n"
-            f"We noticed your interest: {reason}.\n"
-            f"Based on that, we thought you'd love our handcrafted {craft_name}, made from {material}, "
-            f"featuring a {style} style in {color}. It's approximately {estimated_size} and handcrafted: {handcrafted}.\n\n"
-            f"Would you like a special offer or more details?\n\n"
-            f"Warm regards,\nThe Craft Team"
-        )
+        # --- Generate First Pitch Message ---
+        prompt = f"""
+        You are a creative marketing assistant.
+
+        Using the following client and product details, write a short(2-3 lines), friendly, and attractive message that encourages the client to explore the product:
+
+        {product_details}
+
+        Keep it professional yet warm.
+        After warm ragards add from crafts team only.
+        """
     else:
-        # Follow-up query handling
-        query = followup_query.lower()
-        response_lines = [f"Hi {name}, thanks for following up!"]
+        # --- Store follow-up query in chat_history.db ---
+        try:
 
-        if "price" in query or "cost" in query:
-            response_lines.append(f"The {craft_name} is affordably priced. Let us know your budget for a custom quote.")
-        elif "size" in query:
-            response_lines.append(f"The {craft_name} is approximately {estimated_size}.")
-        elif "material" in query:
-            response_lines.append(f"It is made from high-quality {material}.")
-        elif "handmade" in query or "handcrafted" in query:
-            response_lines.append(f"Yes, this product is handcrafted: {handcrafted}.")
-        elif "color" in query:
-            response_lines.append(f"It comes in a beautiful {color} tone.")
-        else:
-            response_lines.append("Let us know your query and we’ll provide full details!")
+            table_name = f"chat_{name.lower().replace(' ', '_')}"
 
-        message = "\n".join(response_lines)
+
+            conn_chat = sqlite3.connect("chat_history.db")
+            cursor_chat = conn_chat.cursor()
+
+            cursor_chat.execute(f"""
+                CREATE TABLE IF NOT EXISTS {table_name} (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    sender TEXT,
+                    message TEXT
+                )
+            """)
+            cursor_chat.execute(f"INSERT INTO {table_name} (sender, message) VALUES (?, ?)", ('user', followup_query))
+            conn_chat.commit()
+            conn_chat.close()
+        except Exception as e:
+            return f"Failed to store query in chat_history.db: {e}"
+
+        # --- Generate Follow-up Reply ---
+        prompt = f"""
+        You are a helpful product assistant.
+
+        A client named {name} has asked the following question: "{followup_query}"
+
+        Product Details:
+            - Material: {material}
+            - Style: {style}
+            - Color: {color}
+            - Size: {estimated_size}
+            - Handcrafted: {handcrafted}
+
+        Write a short(2-3 lines), polite, and informative reply answering their query.
+        """
+
+    message = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": prompt}]
+    ).choices[0].message.content.strip()
 
     return message
 
@@ -212,38 +270,42 @@ def message_framer(name: str, followup_query: str = "") -> str:
 @function_tool
 def sender_and_receiver(name: str, agent_message: str) -> str:
     """
-    Takes the agent's message and the client's name.
-    Simulates sending the message to the user and capturing their query.
-    Stores the agent message and user query in a table named after the user in chat_history.db.
-    """
-    # Show agent message to user (simulate chatbot interaction)
-    print(f"\n📩 Agent to {name}:\n{agent_message}\n")
+    Receives a message from the agent, stores it in the chat log,
+    and simulates sending it to the user.
 
-    # Simulate user input (replace with actual chatbot integration later)
-    user_query = input(f"💬 {name}'s reply: ").strip()
+    - Stores sender='agent', message=agent_message.
+    - Simulates sending to user.
+    """
+
+    if not agent_message:
+        return "No agent message provided."
+
+    table_name = f"chat_{name.lower().replace(' ', '_')}"
 
     conn = sqlite3.connect("chat_history.db")
     cursor = conn.cursor()
 
-    table_name = f"chat_{name.lower().replace(' ', '_')}"
-
     cursor.execute(f"""
         CREATE TABLE IF NOT EXISTS {table_name} (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            agent_message TEXT,
-            user_query TEXT
+            sender TEXT,
+            message TEXT
         )
     """)
 
+    # Store agent message
     cursor.execute(f"""
-        INSERT INTO {table_name} (agent_message, user_query)
+        INSERT INTO {table_name} (sender, message)
         VALUES (?, ?)
-    """, (agent_message, user_query))
+    """, ("agent", agent_message))
 
     conn.commit()
     conn.close()
 
-    return user_query
+    # Simulate sending (optional)
+    print(f"\nAgent to {name}: {agent_message}\n")
+
+    return "Agent message sent to user and stored."
 
 
 agent = Agent(
@@ -252,44 +314,33 @@ agent = Agent(
 You are CraftSalesAssistant — a smart and proactive AI agent designed to help discover potential buyers for handmade crafts, 
 send personalized pitch messages, and handle interactive follow-up queries. You operate using three specialized tools:
 
----
-
 Available Tools:
 
-1. search_client  
-   - Extracts trigger keywords (style, type, color, material, etc.) from `crafts.db`, using metadata and image content.  
-   - Searches for matching potential clients from `clients.db` and a web search.  
-   - Stores matched clients into `potential_clients.db` with a clear reason why they matched.  
+1. search_client    
    - If you are ever told to “fill clients database”, “find potential clients”, or anything similar, you must invoke this tool.
 
 2. message_framer  
-   - Takes the client’s name and an optional follow-up query.  
-   - For initial contact: it fetches their interest from `potential_clients.db` and matches them with the most relevant craft from `crafts.db`.  
-   - For follow-ups: it generates a helpful and relevant response using the associated craft metadata (e.g., color, material, handcrafted, size).  
+   - Takes the client’s name and an optional follow-up query.    
    - Your replies should only come from this tool — do not hardcode messages.
 
 3. sender_and_receiver  
-   - Takes the client’s name and the message generated by `message_framer`.  
-   - Simulates delivering the message to the user (via chatbot).  
-   - Receives a follow-up query from the user.  
-   - Logs both the agent message and user query in a `chat_history.db` table named after the client.  
-   - Returns the user’s follow-up query.  
-   - After receiving a user query from this tool, you must send it back to `message_framer` (with name and query) to generate the reply.
-
----
-
+   - Takes the client’s name and the message generated by `message_framer`.    
+   
 Agent Responsibilities:
 
 - Understand when to use each tool — do not respond directly yourself.
-- Use `search_client` first if the database of potential clients needs to be filled or refreshed.
-- Use `message_framer` to pitch or respond to a client's query (based on name and reason).
-- Use `sender_and_receiver` to pass messages to the chatbot/user, then wait for their response.
-- After receiving the user's query, immediately pass it again (with name) to `message_framer` for a reply.
+- Use `search_client`  if user asks you to fill or refersh the database of potential clients.
+-if a user asks you to send a message follow these two steps -
+    1. Use `message_framer` to pitch (based on name and reason).
+    2. Use `sender_and_receiver` to send a message.
+-if a user tells you that this client sent this follow these three steps -
+    1. extract client's name and message from that data
+    2. Use `message_framer` respond to a client's query .
+    3. use `sender_and_receiver` to store .
 - Always maintain a friendly, clear, and helpful tone based on product knowledge — never guess outside the database.
 - After completing any user instruction (like filling the clients database, sending a message, or replying to a query), always output a confirmation message indicating that the task has been completed successfully.
 
-Your goal is to automate the craft pitching pipeline:  
-Find clients → Pitch personalized message → Handle responses → Log all chat history.
+
 """,
     tools=[search_client, message_framer, sender_and_receiver],
     model="gpt-4o"
