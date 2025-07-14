@@ -171,7 +171,22 @@ def message_framer(name: str, followup_query: str = "") -> str:
     best_score = 0
 
     for image_blob, metadata_json in crafts:
-        metadata = json.loads(metadata_json)
+        # Safe JSON parsing with error handling
+        try:
+            if metadata_json is None or metadata_json == "":
+                metadata = {}
+            else:
+                metadata = json.loads(metadata_json)
+                
+            # Ensure metadata is a dictionary
+            if not isinstance(metadata, dict):
+                metadata = {}
+                
+        except (json.JSONDecodeError, TypeError) as e:
+            # If JSON parsing fails, create empty dict
+            metadata = {}
+        
+        # Extract fields safely with default values
         fields = [
             str(metadata.get("type", "")),
             str(metadata.get("style", "")),
@@ -180,16 +195,31 @@ def message_framer(name: str, followup_query: str = "") -> str:
             str(metadata.get("estimated_size", "")),
             str(metadata.get("handcrafted", ""))
         ]
-        match_score = sum(1 for field in fields if field.lower() in reason_lower)
+        
+        # Calculate match score
+        match_score = sum(1 for field in fields if field.lower() and field.lower() in reason_lower)
         if match_score > best_score:
             best_score = match_score
             best_match = (image_blob, metadata)
 
+    # Use best match or fallback to first craft
     if not best_match:
-        image_blob, metadata = crafts[0]  # fallback
-    else:
-        image_blob, metadata = best_match
+        try:
+            image_blob, metadata_json = crafts[0]
+            # Apply same safe parsing for fallback
+            if metadata_json is None or metadata_json == "":
+                metadata = {}
+            else:
+                metadata = json.loads(metadata_json)
+                if not isinstance(metadata, dict):
+                    metadata = {}
+        except (json.JSONDecodeError, TypeError):
+            metadata = {}
+        best_match = (image_blob, metadata)
+    
+    image_blob, metadata = best_match
 
+    # Extract product details with safe defaults
     style = metadata.get("style", "unique")
     material = metadata.get("material", "premium material")
     estimated_size = metadata.get("estimated_size", "standard size")
@@ -223,9 +253,7 @@ def message_framer(name: str, followup_query: str = "") -> str:
     else:
         # --- Store follow-up query in chat_history.db ---
         try:
-
             table_name = f"chat_{name.lower().replace(' ', '_')}"
-
 
             conn_chat = sqlite3.connect("chat_history.db")
             cursor_chat = conn_chat.cursor()
@@ -259,16 +287,19 @@ def message_framer(name: str, followup_query: str = "") -> str:
         Write a short(2-3 lines), polite, and informative reply answering their query.
         """
 
-    message = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[{"role": "user", "content": prompt}]
-    ).choices[0].message.content.strip()
-
-    return message
-
+    # Generate message using LLM
+    try:
+        message = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt}]
+        ).choices[0].message.content.strip()
+        
+        return message
+    except Exception as e:
+        return f"Failed to generate message: {e}"
 
 @function_tool
-def sender_and_receiver(name: str, agent_message: str) -> str:
+def sender_tool(name: str, message: str) -> str:
     """
     Receives a message from the agent, stores it in the chat log,
     and simulates sending it to the user.
@@ -277,7 +308,7 @@ def sender_and_receiver(name: str, agent_message: str) -> str:
     - Simulates sending to user.
     """
 
-    if not agent_message:
+    if not message:
         return "No agent message provided."
 
     table_name = f"chat_{name.lower().replace(' ', '_')}"
@@ -297,13 +328,13 @@ def sender_and_receiver(name: str, agent_message: str) -> str:
     cursor.execute(f"""
         INSERT INTO {table_name} (sender, message)
         VALUES (?, ?)
-    """, ("agent", agent_message))
+    """, ("agent", message))
 
     conn.commit()
     conn.close()
 
     # Simulate sending (optional)
-    print(f"\nAgent to {name}: {agent_message}\n")
+    print(f"\nAgent to {name}: {message}\n")
 
     return "Agent message sent to user and stored."
 
@@ -314,31 +345,23 @@ agent = Agent(
 You are CraftSalesAssistant — a smart and proactive AI agent designed to help discover potential buyers for handmade crafts, 
 send personalized pitch messages, and handle interactive follow-up queries. You operate using three specialized tools:
 
-Available Tools:
-
-1. search_client    
-   - If you are ever told to “fill clients database”, “find potential clients”, or anything similar, you must invoke this tool.
-
-2. message_framer  
-   - Takes the client’s name and an optional follow-up query.    
-   - Your replies should only come from this tool — do not hardcode messages.
-
-3. sender_and_receiver  
-   - Takes the client’s name and the message generated by `message_framer`.    
-   
 Agent Responsibilities:
 
-- Understand when to use each tool — do not respond directly yourself.
-- Use `search_client`  if user asks you to fill or refersh the database of potential clients.
--if a user asks you to send a message follow these two steps -
-    1. Use `message_framer` to pitch (based on name and reason).
-    2. Use `sender_and_receiver` to send a message.
+- Understand when to use each tool — do not directly respond by yourself.
+- Use search_client tool if user asks you to fill or refersh the database of potential clients.
+-if a you to are asked to send a message to clients follow these two steps -
+    1. Use message_framer tool to frame the message . The followup_query parameter is null in this case .
+    2. Use sender_tool to send a message. ALWAYS use the message returned from message_framer tool as the message parameter in sender_tool
+-if you receive a query like some user replied as something follow these steps -
+    1. Use message_framer tool to frame the message . The followup_query parameter is the reply .
+    2. Use sender_tool to send a message. ALWAYS use the message returned from message_framer tool as the message parameter in sender_tool
+
 - Always maintain a friendly, clear, and helpful tone based on product knowledge — never guess outside the database.
-- After completing any user instruction (like filling the clients database, sending a message, or replying to a query), always output a confirmation message indicating that the task has been completed successfully.
+- After completing any instruction ,always output a confirmation message indicating that the task has been completed successfully.
 
 
 """,
-    tools=[search_client, message_framer, sender_and_receiver],
+    tools=[search_client, message_framer, sender_tool],
     model="gpt-4o"
 )
 
