@@ -152,7 +152,7 @@ def message_framer(name: str, followup_query: str = "") -> str:
     except Exception as e:
         return f"Failed to fetch client data for {name}: {e}"
 
-    # Fetch crafts info 
+    # Fetch crafts info (images + metadata)
     try:
         conn_craft = sqlite3.connect("images.db")
         cursor_craft = conn_craft.cursor()
@@ -333,10 +333,6 @@ Agent Responsibilities:
 -if a user asks you to send a message follow these two steps -
     1. Use `message_framer` to pitch (based on name and reason).
     2. Use `sender_and_receiver` to send a message.
--if a user tells you that this client sent this follow these three steps -
-    1. extract client's name and message from that data
-    2. Use `message_framer` respond to a client's query .
-    3. use `sender_and_receiver` to store .
 - Always maintain a friendly, clear, and helpful tone based on product knowledge — never guess outside the database.
 - After completing any user instruction (like filling the clients database, sending a message, or replying to a query), always output a confirmation message indicating that the task has been completed successfully.
 
@@ -351,3 +347,5 @@ Agent Responsibilities:
 async def ask_agent(prompt: str) -> str:
    result = await Runner.run(agent , prompt)
    return result.final_output.strip() if result.final_output else "No response generated."
+
+

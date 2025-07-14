@@ -44,7 +44,7 @@ def fetch_chat_history(name):
     return chats
 
 def chat_history_user():
-    table_name = "chat_dummy_customer"
+    table_name = "chat_hardik_sharma"
     conn = sqlite3.connect("chat_history.db")
     cursor = conn.cursor()
     try:
@@ -56,7 +56,7 @@ def chat_history_user():
     return chats
 
 def reset_chat_history_preserve_first():
-    table_name = "chat_dummy_customer"
+    table_name = "chat_hardik_sharma"
     conn = sqlite3.connect("chat_history.db")
     cursor = conn.cursor()
     cursor.execute(f"DELETE FROM {table_name} WHERE id != 1")

@@ -148,7 +148,7 @@ with tab2:
     user_query = st.text_input(" ", key="dummy_input")
 
     if user_query:
-        formatted_query = f"Dummy Customer replied with: {user_query}"
+        formatted_query = f"Hardik Sharma replied with: {user_query}"
 
         st.markdown(f"**You:** {user_query}")
 
@@ -157,7 +157,7 @@ with tab2:
             st.markdown(f"**Agent:** {agent_response}")
 
     # Reset chat button
-    
+
     if st.button("🔄 Reset Chat"):
         reset_chat_history_preserve_first()
         st.success("Chat reset!")
