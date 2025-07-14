@@ -10,9 +10,20 @@ import io
 import requests
 from bs4 import BeautifulSoup
 import re
+import streamlit as st
+import openai
 
-load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# Set OpenAI API key using user input or fallback
+if "OPENAI_API_KEY" in st.session_state:
+    openai.api_key = st.session_state["OPENAI_API_KEY"]
+else:
+    load_dotenv()
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+
+# load_dotenv()
+# client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
 @function_tool
@@ -333,7 +344,7 @@ def sender_tool(name: str, message: str) -> str:
     conn.commit()
     conn.close()
 
-    # Simulate sending (optional)
+    # Simulate sending 
     print(f"\nAgent to {name}: {message}\n")
 
     return "Agent message sent to user and stored."

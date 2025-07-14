@@ -1,6 +1,7 @@
 import streamlit as st
 import sqlite3
 import asyncio
+import openai
 from db import init_db, save_image_with_metadata, get_images_with_metadata
 from llm_parser import extract_metadata_from_image
 from agent_handler import ask_agent 
@@ -8,6 +9,21 @@ from function_handler import (
     fetch_chat_history, fetch_clients, fetch_messaged_clients,
     mark_client_messaged, chat_history_user, reset_chat_history_preserve_first
 )
+
+#  Prompt user for their OpenAI API key
+st.sidebar.header("API Configuration")
+user_api_key = st.sidebar.text_input(
+    "Enter your OpenAI API Key",
+    type="password"
+)
+
+if user_api_key:
+    st.session_state["OPENAI_API_KEY"] = user_api_key
+    openai.api_key = user_api_key
+else:
+    st.warning("Please enter your OpenAI API key to continue.")
+    st.stop()
+
 
 init_db()
 
