@@ -11,18 +11,18 @@ from function_handler import (
 )
 
 #  Prompt user for their OpenAI API key
-st.sidebar.header("API Configuration")
-user_api_key = st.sidebar.text_input(
-    "Enter your OpenAI API Key",
-    type="password"
-)
+# st.sidebar.header("API Configuration")
+# user_api_key = st.sidebar.text_input(
+#     "Enter your OpenAI API Key",
+#     type="password"
+# )
 
-if user_api_key:
-    st.session_state["OPENAI_API_KEY"] = user_api_key
-    openai.api_key = user_api_key
-else:
-    st.warning("Please enter your OpenAI API key to continue.")
-    st.stop()
+# if user_api_key:
+#     st.session_state["OPENAI_API_KEY"] = user_api_key
+#     openai.api_key = user_api_key
+# else:
+#     st.warning("Please enter your OpenAI API key to continue.")
+#     st.stop()
 
 
 init_db()
@@ -103,23 +103,29 @@ with tab1:
     # --- Chat Popup View ---
     if st.session_state["open_chat"]:
         name = st.session_state["open_chat"]
-        chat_history = fetch_chat_history(name)
+        chat_history = fetch_chat_history(name)  # Should return: [(sender, message, image), ...]
 
         st.markdown("---")
         st.markdown(f"## 💬 Chat History with {name}")
 
         if chat_history:
+            chat_html = ""
+            for sender, message, image in chat_history:
+                if image:
+                    content = "[Image sent]"
+                else:
+                    content = message or "[No message]"
+
+                chat_html += f"<p><b>{sender.capitalize()}:</b> {content}</p>"
+
             st.markdown(
-                "<div style='height:300px; overflow-y: scroll; border:1px solid #ccc; padding:10px; background:#fafafa'>"
-                + "".join(
-                    f"<p><b>{sender.capitalize()}:</b> {message}</p>"
-                    for sender, message in chat_history
-                )
-                + "</div>",
+                f"<div style='height:300px; overflow-y: scroll; border:1px solid #ccc; padding:10px; background:#fafafa'>{chat_html}</div>",
                 unsafe_allow_html=True
             )
+
         else:
             st.info(f"No chat history found for {name}.")
+
 
         if st.button("Close Chat Window"):
             st.session_state["open_chat"] = None
@@ -148,16 +154,23 @@ with tab2:
 
     st.subheader("Chat History")
     chats = chat_history_user()
+
     if chats:
-        for chat_id, sender, message in chats:
-            if sender == "user":
-                st.markdown(f"<div style='background-color:#e6f7ff; padding:8px; border-radius:5px; margin:4px 0;'>"
-                        f"<b>User:</b> {message}</div>", unsafe_allow_html=True)
-            else:
+        for chat_id, sender, message, image in chats:
+            if image:  # Image is present
                 st.markdown(f"<div style='background-color:#fffbe6; padding:8px; border-radius:5px; margin:4px 0;'>"
-                        f"<b>Agent:</b> {message}</div>", unsafe_allow_html=True)
+                        f"<b>{sender.capitalize()} sent an image:</b></div>", unsafe_allow_html=True)
+                st.image(image)  
+            else:  
+                if sender == "user":
+                    st.markdown(f"<div style='background-color:#e6f7ff; padding:8px; border-radius:5px; margin:4px 0;'>"
+                            f"<b>User:</b> {message}</div>", unsafe_allow_html=True)
+                else:
+                    st.markdown(f"<div style='background-color:#fffbe6; padding:8px; border-radius:5px; margin:4px 0;'>"
+                            f"<b>Agent:</b> {message}</div>", unsafe_allow_html=True)
     else:
-        st.info("No chat history yet.")
+        st.write("No chat history available.")
+
 
     st.subheader("Send Message to Agent")
 
@@ -166,11 +179,10 @@ with tab2:
     if user_query:
         formatted_query = f"Hardik Sharma replied with: {user_query}"
 
-        st.markdown(f"**You:** {user_query}")
 
         with st.spinner("sending..."):
             agent_response = asyncio.run(ask_agent(formatted_query))
-            st.markdown(f"**Agent:** {agent_response}")
+            st.markdown(f"message sent ,referesh")
 
     # Reset chat button
 

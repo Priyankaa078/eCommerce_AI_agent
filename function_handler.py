@@ -36,7 +36,7 @@ def fetch_chat_history(name):
     conn = sqlite3.connect("chat_history.db")
     cursor = conn.cursor()
     try:
-        cursor.execute(f"SELECT sender, message FROM {table_name}")
+        cursor.execute(f"SELECT sender, message ,image FROM {table_name}")
         chats = cursor.fetchall()
     except Exception:
         chats = []
@@ -48,7 +48,7 @@ def chat_history_user():
     conn = sqlite3.connect("chat_history.db")
     cursor = conn.cursor()
     try:
-        cursor.execute(f"SELECT id, sender, message FROM {table_name} ORDER BY id")
+        cursor.execute(f"SELECT id, sender, message, image FROM {table_name} ORDER BY id")
         chats = cursor.fetchall()
     except Exception:
         chats = []

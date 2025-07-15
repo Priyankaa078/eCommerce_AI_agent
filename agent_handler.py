@@ -15,15 +15,15 @@ import openai
 
 
 # Set OpenAI API key using user input or fallback
-if "OPENAI_API_KEY" in st.session_state:
-    openai.api_key = st.session_state["OPENAI_API_KEY"]
-else:
-    load_dotenv()
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# if "OPENAI_API_KEY" in st.session_state:
+#     openai.api_key = st.session_state["OPENAI_API_KEY"]
+# else:
+#     load_dotenv()
+#     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
-# load_dotenv()
-# client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+load_dotenv()
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
 @function_tool
@@ -270,33 +270,52 @@ def message_framer(name: str, followup_query: str = "") -> str:
             cursor_chat = conn_chat.cursor()
 
             cursor_chat.execute(f"""
-                CREATE TABLE IF NOT EXISTS {table_name} (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    sender TEXT,
-                    message TEXT
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sender TEXT,
+                message TEXT,
+                image BLOB
                 )
             """)
-            cursor_chat.execute(f"INSERT INTO {table_name} (sender, message) VALUES (?, ?)", ('user', followup_query))
-            conn_chat.commit()
+
+    # Fetch the last message's sender
+            cursor_chat.execute(f"""
+            SELECT sender FROM {table_name}
+            ORDER BY id DESC
+            LIMIT 1
+            """)
+            last_message = cursor_chat.fetchone()
+
+    # Only insert if last sender is not 'user'
+            if not last_message or last_message[0] != 'user':
+                cursor_chat.execute(f"""
+                INSERT INTO {table_name} (sender, message, image)
+                VALUES (?, ?, ?)
+                """, ('user', followup_query, None))
+                conn_chat.commit()
+
             conn_chat.close()
+
         except Exception as e:
             return f"Failed to store query in chat_history.db: {e}"
 
+
         # --- Generate Follow-up Reply ---
-        prompt = f"""
-        You are a helpful product assistant.
+        prompt = prompt = f"""
+        You are a product assistant.
 
-        A client named {name} has asked the following question: "{followup_query}"
+        A client named {name} has asked: "{followup_query}"
 
-        Product Details:
-            - Material: {material}
-            - Style: {style}
-            - Color: {color}
-            - Size: {estimated_size}
-            - Handcrafted: {handcrafted}
+        Using ONLY the following product details, answer clearly and directly in 2-3 lines:
+        - Material: {material}
+        - Style: {style}
+        - Color: {color}
+        - Size: {estimated_size}
+        - Handcrafted: {handcrafted}
 
-        Write a short(2-3 lines), polite, and informative reply answering their query.
+        Focus strictly on answering the query using these details. Avoid any extra commentary. Do not add greetings or conclusions.
         """
+
 
     # Generate message using LLM
     try:
@@ -308,6 +327,104 @@ def message_framer(name: str, followup_query: str = "") -> str:
         return message
     except Exception as e:
         return f"Failed to generate message: {e}"
+    
+@function_tool
+def image_sender_tool(name: str, query: str) -> str:
+    """
+    Picks the best-matching image based on client's chat history and current query,
+    sends it to the client, and stores both the query and image in the chat history.
+
+    Parameters:
+        name (str): Client name.
+        query (str): User's image request.
+
+    Returns:
+        str: Confirmation message.
+    """
+    table_name = f"chat_{name.lower().replace(' ', '_')}"
+
+    try:
+        # Load client chat history
+        conn_chat = sqlite3.connect("chat_history.db")
+        cursor_chat = conn_chat.cursor()
+
+        cursor_chat.execute(f"""
+            CREATE TABLE IF NOT EXISTS {table_name} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sender TEXT,
+                message TEXT,
+                image BLOB
+            )
+        """)
+
+        cursor_chat.execute(f"SELECT message FROM {table_name} WHERE message IS NOT NULL")
+        past_messages_rows = cursor_chat.fetchall()
+        conn_chat.commit()
+
+        # Tokenize past messages + query
+        past_messages = " ".join([msg[0] for msg in past_messages_rows if msg[0]]) + " " + query
+        tokens = set(word.lower() for word in past_messages.split())
+
+        # Load crafts database
+        conn_craft = sqlite3.connect("images.db")
+        cursor_craft = conn_craft.cursor()
+        cursor_craft.execute("SELECT image, metadata FROM images")
+        crafts = cursor_craft.fetchall()
+        conn_craft.close()
+
+        best_match = None
+        best_score = 0
+
+        for image_blob, metadata_json in crafts:
+            try:
+                metadata = json.loads(metadata_json) if metadata_json else {}
+            except json.JSONDecodeError:
+                metadata = {}
+
+            # Collect metadata fields as lowercase words
+            fields = [
+                str(metadata.get("type", "")),
+                str(metadata.get("style", "")),
+                str(metadata.get("color", "")),
+                str(metadata.get("material", "")),
+                str(metadata.get("estimated_size", "")),
+                str(metadata.get("handcrafted", ""))
+            ]
+            field_tokens = set(word.lower() for field in fields for word in field.split())
+
+            # Score: count overlaps between metadata tokens and past message tokens
+            match_score = len(tokens.intersection(field_tokens))
+
+            if match_score > best_score:
+                best_score = match_score
+                best_match = image_blob
+
+        if not best_match:
+            # Fallback to first image if no match
+            best_match = crafts[0][0] if crafts else None
+
+        if not best_match:
+            return "No crafts found to send."
+
+        # Store user's query
+        cursor_chat.execute(f"""
+            INSERT INTO {table_name} (sender, message, image)
+            VALUES (?, ?, ?)
+        """, ('user', query, None))
+
+        # Store image as agent message
+        cursor_chat.execute(f"""
+            INSERT INTO {table_name} (sender, message, image)
+            VALUES (?, ?, ?)
+        """, ('agent', '[Image Sent]', best_match))
+
+        conn_chat.commit()
+        conn_chat.close()
+
+        return f"Image sent based on client's history and stored for {name}."
+
+    except Exception as e:
+        return f"Error in image_sender_tool: {e}"
 
 @function_tool
 def sender_tool(name: str, message: str) -> str:
@@ -331,15 +448,16 @@ def sender_tool(name: str, message: str) -> str:
         CREATE TABLE IF NOT EXISTS {table_name} (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             sender TEXT,
-            message TEXT
+            message TEXT,
+            image BLOB
         )
     """)
 
     # Store agent message
     cursor.execute(f"""
-        INSERT INTO {table_name} (sender, message)
-        VALUES (?, ?)
-    """, ("agent", message))
+        INSERT INTO {table_name} (sender, message ,image)
+        VALUES (?, ? ,?)
+    """, ("agent", message , None))
 
     conn.commit()
     conn.close()
@@ -353,26 +471,29 @@ def sender_tool(name: str, message: str) -> str:
 agent = Agent(
     name="CraftSalesAssistant",
     instructions="""
-You are CraftSalesAssistant — a smart and proactive AI agent designed to help discover potential buyers for handmade crafts, 
-send personalized pitch messages, and handle interactive follow-up queries. You operate using three specialized tools:
+You are CraftSalesAssistant — a smart and proactive AI agent designed to help discover potential buyers for handmade crafts,
+send personalized pitch messages, and handle interactive follow-up queries.
+You operate using four specialized tools to build relationships and drive sales.
 
-Agent Responsibilities:
+Think about what each client needs in their specific situation. 
+When someone asks you to refresh the database or search clients, use search_client to find new prospects. 
+When sending initial messages, use message_framer with followup_query set to null, then deliver it with sender_tool. 
 
-- Understand when to use each tool — do not directly respond by yourself.
-- Use search_client tool if user asks you to fill or refersh the database of potential clients.
--if a you to are asked to send a message to clients follow these two steps -
-    1. Use message_framer tool to frame the message . The followup_query parameter is null in this case .
-    2. Use sender_tool to send a message. ALWAYS use the message returned from message_framer tool as the message parameter in sender_tool
--if you receive a query like some user replied as something follow these steps -
-    1. Use message_framer tool to frame the message . The followup_query parameter is the reply .
-    2. Use sender_tool to send a message. ALWAYS use the message returned from message_framer tool as the message parameter in sender_tool
+For client replies and queries, analyze what would genuinely help them most. 
+If they're asking about product details, structure, or want explanations, craft a detailed response using message_framer and send it with sender_tool. 
+If their query asks more details(images, photos, or visual references) use image_sender_tool to share relevant product visuals. 
+For other types of replies, use message_framer with the followup_query parameter set to their message, then send your response with sender_tool.
 
-- Always maintain a friendly, clear, and helpful tone based on product knowledge — never guess outside the database.
-- After completing any instruction ,always output a confirmation message indicating that the task has been completed successfully.
+Sometimes clients benefit from both visual and written information together. 
+Use your judgment to determine when combining an image with a detailed explanation serves them better than either alone.
+
+Stay friendly, clear, and helpful in all interactions. 
+After completing any task, provide a clear confirmation message showing successful completion. 
+Your goal is to understand each client's needs and respond in the most helpful way possible.
 
 
 """,
-    tools=[search_client, message_framer, sender_tool],
+    tools=[search_client, message_framer, sender_tool ,image_sender_tool],
     model="gpt-4o"
 )
 
