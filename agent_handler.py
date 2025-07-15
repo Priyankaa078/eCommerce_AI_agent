@@ -278,21 +278,11 @@ def message_framer(name: str, followup_query: str = "") -> str:
                 )
             """)
 
-    # Fetch the last message's sender
             cursor_chat.execute(f"""
-            SELECT sender FROM {table_name}
-            ORDER BY id DESC
-            LIMIT 1
-            """)
-            last_message = cursor_chat.fetchone()
-
-    # Only insert if last sender is not 'user'
-            if not last_message or last_message[0] != 'user':
-                cursor_chat.execute(f"""
                 INSERT INTO {table_name} (sender, message, image)
                 VALUES (?, ?, ?)
                 """, ('user', followup_query, None))
-                conn_chat.commit()
+            conn_chat.commit()
 
             conn_chat.close()
 
@@ -329,22 +319,24 @@ def message_framer(name: str, followup_query: str = "") -> str:
         return f"Failed to generate message: {e}"
     
 @function_tool
-def image_sender_tool(name: str, query: str) -> str:
+def image_sender_tool(name: str, agent_message: str) -> str:
     """
-    Picks the best-matching image based on client's chat history and current query,
-    sends it to the client, and stores both the query and image in the chat history.
+    Picks the best-matching image based on the agent's message,
+    sends it to the client, and stores the image in the chat history.
+
+    If no match is found, sends nothing and returns NULL.
 
     Parameters:
         name (str): Client name.
-        query (str): User's image request.
+        agent_message (str): Agent's message to base the image selection on.
 
     Returns:
-        str: Confirmation message.
+        str: Confirmation message or 'NULL' if no match found.
     """
     table_name = f"chat_{name.lower().replace(' ', '_')}"
 
     try:
-        # Load client chat history
+        # Load client chat history database
         conn_chat = sqlite3.connect("chat_history.db")
         cursor_chat = conn_chat.cursor()
 
@@ -357,13 +349,8 @@ def image_sender_tool(name: str, query: str) -> str:
             )
         """)
 
-        cursor_chat.execute(f"SELECT message FROM {table_name} WHERE message IS NOT NULL")
-        past_messages_rows = cursor_chat.fetchall()
-        conn_chat.commit()
-
-        # Tokenize past messages + query
-        past_messages = " ".join([msg[0] for msg in past_messages_rows if msg[0]]) + " " + query
-        tokens = set(word.lower() for word in past_messages.split())
+        # Tokenize agent's message
+        tokens = set(word.lower() for word in agent_message.split())
 
         # Load crafts database
         conn_craft = sqlite3.connect("images.db")
@@ -392,7 +379,7 @@ def image_sender_tool(name: str, query: str) -> str:
             ]
             field_tokens = set(word.lower() for field in fields for word in field.split())
 
-            # Score: count overlaps between metadata tokens and past message tokens
+            # Score: count overlaps between metadata tokens and message tokens
             match_score = len(tokens.intersection(field_tokens))
 
             if match_score > best_score:
@@ -400,31 +387,23 @@ def image_sender_tool(name: str, query: str) -> str:
                 best_match = image_blob
 
         if not best_match:
-            # Fallback to first image if no match
-            best_match = crafts[0][0] if crafts else None
+            # No matching image found
+            return "NULL"
 
-        if not best_match:
-            return "No crafts found to send."
-
-        # Store user's query
+        # Store image as agent's message 
         cursor_chat.execute(f"""
             INSERT INTO {table_name} (sender, message, image)
             VALUES (?, ?, ?)
-        """, ('user', query, None))
-
-        # Store image as agent message
-        cursor_chat.execute(f"""
-            INSERT INTO {table_name} (sender, message, image)
-            VALUES (?, ?, ?)
-        """, ('agent', '[Image Sent]', best_match))
+        """, ('agent', None, best_match))
 
         conn_chat.commit()
         conn_chat.close()
 
-        return f"Image sent based on client's history and stored for {name}."
+        return f"Image sent based on agent's message and stored for {name}."
 
     except Exception as e:
         return f"Error in image_sender_tool: {e}"
+
 
 @function_tool
 def sender_tool(name: str, message: str) -> str:
@@ -476,12 +455,15 @@ send personalized pitch messages, and handle interactive follow-up queries.
 You operate using four specialized tools to build relationships and drive sales.
 
 Think about what each client needs in their specific situation. 
-When someone asks you to refresh the database or search clients, use search_client to find new prospects. 
+When someone asks you to refresh the database or search clients, use search_client to find new prospects.
+This tool searches potential clients for our products and stores them into the database. 
+If there’s any query related to this, you should call this tool.
+
 When sending initial messages, use message_framer with followup_query set to null, then deliver it with sender_tool. 
 
 For client replies and queries, analyze what would genuinely help them most. 
 If they're asking about product details, structure, or want explanations, craft a detailed response using message_framer and send it with sender_tool. 
-If their query asks more details(images, photos, or visual references) use image_sender_tool to share relevant product visuals. 
+If their query asks more details(images, photos, or visual references) use message_framer to frame a reply and then pass this reply to image_sender_tool to share relevant product visuals. 
 For other types of replies, use message_framer with the followup_query parameter set to their message, then send your response with sender_tool.
 
 Sometimes clients benefit from both visual and written information together. 

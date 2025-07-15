@@ -103,28 +103,36 @@ with tab1:
     # --- Chat Popup View ---
     if st.session_state["open_chat"]:
         name = st.session_state["open_chat"]
-        chat_history = fetch_chat_history(name)  # Should return: [(sender, message, image), ...]
+        chats = fetch_chat_history(name)  # Should return: [(sender, message, image), ...]
 
         st.markdown("---")
         st.markdown(f"## 💬 Chat History with {name}")
 
-        if chat_history:
-            chat_html = ""
-            for sender, message, image in chat_history:
-                if image:
-                    content = "[Image sent]"
+        if chats:
+            for  sender, message, image in chats:
+                if image:  # Image is present
+                    st.markdown(
+                        f"<div style='background-color:#fffbe6; padding:8px; border-radius:5px; margin:4px 0;'>"
+                        f"<b>{sender.capitalize()} sent an image:</b></div>",
+                        unsafe_allow_html=True
+                    )
+                    st.image(image)
                 else:
-                    content = message or "[No message]"
-
-                chat_html += f"<p><b>{sender.capitalize()}:</b> {content}</p>"
-
-            st.markdown(
-                f"<div style='height:300px; overflow-y: scroll; border:1px solid #ccc; padding:10px; background:#fafafa'>{chat_html}</div>",
-                unsafe_allow_html=True
-            )
-
+                    if sender == "user":
+                        st.markdown(
+                        f"<div style='background-color:#e6f7ff; padding:8px; border-radius:5px; margin:4px 0;'>"
+                        f"<b>User:</b> {message}</div>",
+                        unsafe_allow_html=True
+                        )
+                    else:
+                        st.markdown(
+                        f"<div style='background-color:#fffbe6; padding:8px; border-radius:5px; margin:4px 0;'>"
+                        f"<b>Agent:</b> {message}</div>",
+                        unsafe_allow_html=True
+                        )
         else:
-            st.info(f"No chat history found for {name}.")
+            st.write("No chat history available.")
+
 
 
         if st.button("Close Chat Window"):
