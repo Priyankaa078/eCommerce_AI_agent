@@ -194,7 +194,6 @@ def message_framer(name: str, followup_query: str = "") -> str:
                 metadata = {}
                 
         except (json.JSONDecodeError, TypeError) as e:
-            # If JSON parsing fails, create empty dict
             metadata = {}
         
         # Extract fields safely with default values
@@ -480,9 +479,18 @@ Your goal is to understand each client's needs and respond in the most helpful w
 )
 
 
-# Interface to ask the agent
 async def ask_agent(prompt: str) -> str:
-   result = await Runner.run(agent , prompt)
-   return result.final_output.strip() if result.final_output else "No response generated."
+    result = await Runner.run(agent, prompt)
+    return result.final_output.strip() if result.final_output else "No response generated."
 
-
+async def ask_agent_streaming(prompt: str):
+    """Enable streaming from Runner"""
+    try:
+        result = Runner.run_streamed(agent, input=prompt)
+        async for event in result.stream_events():
+            yield event
+            
+    except Exception as e:
+        st.error(f"Streaming error: {e}")
+        result = await Runner.run(agent, prompt)
+        yield {"type": "final_response", "content": result.final_output.strip()}
