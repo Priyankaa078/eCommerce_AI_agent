@@ -1,6 +1,10 @@
 import streamlit as st
 import sqlite3
 import asyncio
+import os
+from dotenv import load_dotenv
+ENV_FILE = '.env'
+
 
 def fetch_clients():
     conn = sqlite3.connect("potential_clients.db")
@@ -62,3 +66,23 @@ def reset_chat_history_preserve_first():
     cursor.execute(f"DELETE FROM {table_name} WHERE id != 1")
     conn.commit()
     conn.close()
+
+def save_api_key_to_env(api_key):
+    env_vars = {}
+    if os.path.exists(ENV_FILE):
+        with open(ENV_FILE, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    env_vars[key] = value
+    
+    env_vars['OPENAI_API_KEY'] = api_key
+    
+    with open(ENV_FILE, 'w') as f:
+        for key, value in env_vars.items():
+            f.write(f"{key}={value}\n")
+
+def load_api_key_from_env():
+    load_dotenv(ENV_FILE)
+    return os.getenv('OPENAI_API_KEY')

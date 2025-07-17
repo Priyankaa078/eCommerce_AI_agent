@@ -1,70 +1,68 @@
+import os
 import streamlit as st
+from dotenv import load_dotenv
+
+ENV_FILE = '.env'
+load_dotenv(ENV_FILE)
+
 import sqlite3
 import asyncio
 import openai
 from db import init_db, save_image_with_metadata, get_images_with_metadata
-from llm_parser import extract_metadata_from_image
-from agent_handler import ask_agent_streaming , ask_agent
-from function_handler import fetch_chat_history, fetch_clients, fetch_messaged_clients,mark_client_messaged, chat_history_user, reset_chat_history_preserve_first 
+from function_handler import fetch_chat_history, fetch_clients, fetch_messaged_clients, mark_client_messaged, chat_history_user, reset_chat_history_preserve_first , load_api_key_from_env ,save_api_key_to_env
 
+api_key = load_api_key_from_env()
 
-#  Prompt user for their OpenAI API key
-# st.sidebar.header("API Configuration")
-# user_api_key = st.sidebar.text_input(
-#     "Enter your OpenAI API Key",
-#     type="password"
-# )
-
-# if user_api_key:
-#     st.session_state["OPENAI_API_KEY"] = user_api_key
-#     openai.api_key = user_api_key
-# else:
-#     st.warning("Please enter your OpenAI API key to continue.")
-
-#     st.stop()
-async def stream_agent():
-    final_response = ""
+if not api_key:
+    st.warning("OpenAI API key not found. Please enter it below:")
     
+    user_api_key = st.text_input("Enter your OpenAI API Key", type="password", key="api_key_input")
+    
+    if user_api_key:
+        save_api_key_to_env(user_api_key)
+        st.success("API key saved! Please refresh the page.")
+        st.stop()
+    
+    st.stop()
+
+try:
+    from llm_parser import extract_metadata_from_image
+    from agent_handler import ask_agent_streaming 
+except Exception as e:
+    st.error(f"Error importing modules: {str(e)}")
+    st.error("Please refresh the page after setting your API key.")
+    st.stop()
+
+async def stream_agent(user_query, status_placeholder=None):
+    final_response = ""
+
     async for event in ask_agent_streaming(user_query):
-        # Debug: Print event type and attributes (remove these prints in production)
-        # print(f"Event type: {type(event)}")
-        # print(f"Event attributes: {dir(event)}")
-        
-        # Handle tool call events
         if hasattr(event, 'type') and event.type == "run_item_stream_event":
             if hasattr(event, 'item') and hasattr(event.item, 'type') and event.item.type == "tool_call_item":
                 tool_name = event.item.raw_item.name.replace("_", " ").title()
-                status_placeholder.markdown(
-                    f"🔧 <b>Calling tool:</b> {tool_name}",
-                    unsafe_allow_html=True
-                )
-                # Don't interfere with tool execution, just show status
-        
-        # Handle text streaming
-        elif hasattr(event, 'type') and event.type == "raw_response_event":
-            if hasattr(event, 'data') and hasattr(event.data, 'delta'):
-                final_response += event.data.delta
-        
-        # Handle tool execution completion
-        elif hasattr(event, 'type') and event.type == "tool_execution_event":
-            # Tool has completed, clear status
-            status_placeholder.markdown(" Tool execution completed")
-        
-        # Handle AgentUpdatedStreamEvent
-        elif hasattr(event, 'type') and event.type == "agent_updated_stream_event":
-            # This might contain tool information or results
-            if hasattr(event, 'data'):
-                # Don't interfere with the data, just log it
-                pass
-        
-        # Handle final response
+                if status_placeholder:
+                    status_placeholder.markdown(
+                        f"🔧 <b>Calling tool:</b> {tool_name}",
+                        unsafe_allow_html=True
+                    )
+
         elif hasattr(event, 'type') and event.type == "final_response":
             final_response = getattr(event, 'content', "")
-        
-        # Don't add delays that might interfere with tool execution
-        # await asyncio.sleep(0.01)  # Removed to prevent blocking
-    
+
     return final_response
+
+
+
+def safe_async_run(coro):
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    if loop.is_running():
+        return asyncio.ensure_future(coro)
+    else:
+        return loop.run_until_complete(coro)
 
 
 init_db()
@@ -76,11 +74,7 @@ tab1, tab2 = st.tabs(["Craftsman interface", "Dummy user interface"])
 with tab1:
     st.header("Upload Handicraft Images")
 
-    uploaded_files = st.file_uploader(
-        "Choose images",
-        type=["jpg", "jpeg", "png"],
-        accept_multiple_files=True
-    )
+    uploaded_files = st.file_uploader("Choose images", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
 
     if uploaded_files:
         for file in uploaded_files:
@@ -131,8 +125,10 @@ with tab1:
             st.success(f"Selected Clients: {selected_users}")
 
         if st.button("Send Message to Selected Clients"):
-            message_to_agent = f"send message to these users: {selected_users}"
-            response = asyncio.run(ask_agent(message_to_agent))
+            user_query = f"send message to these users: {selected_users}"
+            status_placeholder = st.empty()
+            response = safe_async_run(stream_agent(user_query, status_placeholder))
+            status_placeholder.empty()
 
             for name in selected_users:
                 mark_client_messaged(name)
@@ -145,14 +141,14 @@ with tab1:
     # --- Chat Popup View ---
     if st.session_state["open_chat"]:
         name = st.session_state["open_chat"]
-        chats = fetch_chat_history(name)  # Should return: [(sender, message, image), ...]
+        chats = fetch_chat_history(name)
 
         st.markdown("---")
         st.markdown(f"## 💬 Chat History with {name}")
 
         if chats:
-            for  sender, message, image in chats:
-                if image:  # Image is present
+            for sender, message, image in chats:
+                if image:
                     st.markdown(
                         f"<div style='background-color:#fffbe6; padding:8px; border-radius:5px; margin:4px 0;'>"
                         f"<b>{sender.capitalize()} sent an image:</b></div>",
@@ -162,20 +158,18 @@ with tab1:
                 else:
                     if sender == "user":
                         st.markdown(
-                        f"<div style='background-color:#e6f7ff; padding:8px; border-radius:5px; margin:4px 0;'>"
-                        f"<b>User:</b> {message}</div>",
-                        unsafe_allow_html=True
+                            f"<div style='background-color:#e6f7ff; padding:8px; border-radius:5px; margin:4px 0;'>"
+                            f"<b>User:</b> {message}</div>",
+                            unsafe_allow_html=True
                         )
                     else:
                         st.markdown(
-                        f"<div style='background-color:#fffbe6; padding:8px; border-radius:5px; margin:4px 0;'>"
-                        f"<b>Agent:</b> {message}</div>",
-                        unsafe_allow_html=True
+                            f"<div style='background-color:#fffbe6; padding:8px; border-radius:5px; margin:4px 0;'>"
+                            f"<b>Agent:</b> {message}</div>",
+                            unsafe_allow_html=True
                         )
         else:
             st.write("No chat history available.")
-
-
 
         if st.button("Close Chat Window"):
             st.session_state["open_chat"] = None
@@ -184,25 +178,21 @@ with tab1:
     st.divider()
     st.header("Ask the AI Agent")
 
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
+    if "craftsman_chat_history" not in st.session_state:
+        st.session_state["craftsman_chat_history"] = []
 
     user_query = st.text_input("You:", key="agent_input")
 
-    status_placeholder = st.empty()  
+    status_placeholder = st.empty()
     response_placeholder = st.empty()
 
     if user_query:
-        st.session_state.chat_history.append(("user", user_query))
+        st.session_state["craftsman_chat_history"].append(("user", user_query))
 
-        # Run async streaming
-        response = asyncio.run(stream_agent())
-        st.session_state.chat_history.append(("agent", response))
+        response = safe_async_run(stream_agent(user_query, status_placeholder))
+        st.session_state["craftsman_chat_history"].append(("agent", response))
 
         status_placeholder.empty()
-
-        st.markdown(f"**User:** {user_query}")
-        st.markdown(f"**Agent:** {response}")
 
 # ---------------------- Tab 2: Dummy User Interface ----------------------
 with tab2:
@@ -213,39 +203,41 @@ with tab2:
 
     if chats:
         for chat_id, sender, message, image in chats:
-            if image:  # Image is present
-                st.markdown(f"<div style='background-color:#fffbe6; padding:8px; border-radius:5px; margin:4px 0;'>"
-                        f"<b>{sender.capitalize()} sent an image:</b></div>", unsafe_allow_html=True)
-                st.image(image)  
-            else:  
+            if image:
+                st.markdown(
+                    f"<div style='background-color:#fffbe6; padding:8px; border-radius:5px; margin:4px 0;'>"
+                    f"<b>{sender.capitalize()} sent an image:</b></div>",
+                    unsafe_allow_html=True
+                )
+                st.image(image)
+            else:
                 if sender == "user":
-                    st.markdown(f"<div style='background-color:#e6f7ff; padding:8px; border-radius:5px; margin:4px 0;'>"
-                            f"<b>User:</b> {message}</div>", unsafe_allow_html=True)
+                    st.markdown(
+                        f"<div style='background-color:#e6f7ff; padding:8px; border-radius:5px; margin:4px 0;'>"
+                        f"<b>User:</b> {message}</div>",
+                        unsafe_allow_html=True
+                    )
                 else:
-                    st.markdown(f"<div style='background-color:#fffbe6; padding:8px; border-radius:5px; margin:4px 0;'>"
-                            f"<b>Agent:</b> {message}</div>", unsafe_allow_html=True)
+                    st.markdown(
+                        f"<div style='background-color:#fffbe6; padding:8px; border-radius:5px; margin:4px 0;'>"
+                        f"<b>Agent:</b> {message}</div>",
+                        unsafe_allow_html=True
+                    )
     else:
         st.write("No chat history available.")
-
 
     st.subheader("Send Message to Agent")
 
     user_query1 = st.text_input(" ", key="dummy_input")
 
-
     if user_query1:
-        user_query = f"Hardik Sharma replied with: {user_query1}"
-        status_placeholder = st.empty()  # Placeholder to show live tool calls
-    
-    # Show real tool call status updates from agent
-        agent_response = asyncio.run(stream_agent())
-        status_placeholder.empty()  # Clear tool status once done
-        st.markdown("Message sent. Please refresh.")
+        user_query_dummy = f"Hardik Sharma replied with: {user_query1}"
+        status_placeholder = st.empty()
 
-    # Reset chat button
+        agent_response = safe_async_run(stream_agent(user_query_dummy, status_placeholder))
+        status_placeholder.empty()
+        st.markdown("Message sent. Please refresh.")
 
     if st.button("🔄 Reset Chat"):
         reset_chat_history_preserve_first()
         st.success("Chat reset!")
-
-

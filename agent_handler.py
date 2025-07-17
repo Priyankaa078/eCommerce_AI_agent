@@ -14,14 +14,6 @@ import streamlit as st
 import openai
 
 
-# Set OpenAI API key using user input or fallback
-# if "OPENAI_API_KEY" in st.session_state:
-#     openai.api_key = st.session_state["OPENAI_API_KEY"]
-# else:
-#     load_dotenv()
-#     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -35,7 +27,6 @@ def search_client():
     Missing fields like email are filled as 'NA'. Reason explains why the client matched.
     """
     try:
-        # --- Load triggers from crafts metadata and images ---
         print("Connecting to images.db...")
         conn_crafts = sqlite3.connect("images.db", check_same_thread=False)
         cursor_crafts = conn_crafts.cursor()
@@ -75,7 +66,6 @@ def search_client():
 
         print("Extracted triggers:", triggers)
 
-        # --- Load client database ---
         print("Connecting to meesho.db...")
         conn_clients = sqlite3.connect("meesho.db", check_same_thread=False)
         cursor_clients = conn_clients.cursor()
@@ -91,7 +81,6 @@ def search_client():
             text_blob = f"{(last_bought or '')} {(liked or '')} {(address or '')}".lower()
             matched_triggers = [t for t in triggers if t.lower() in text_blob]
             if matched_triggers:
-                # Use LLM to generate reason summary
                 reason_prompt = f"""
                 You are an expert product marketer.
 
@@ -115,7 +104,6 @@ def search_client():
 
         print(f"{len(matched_clients)} clients matched.")
 
-        # --- Save to potential_clients.db ---
         print("Saving to potential_clients.db...")
         conn_out = sqlite3.connect("potential_clients.db", check_same_thread=False)
         cursor_out = conn_out.cursor()
@@ -149,8 +137,6 @@ def message_framer(name: str, followup_query: str = "") -> str:
     Uses LLM to generate messages.
     Also stores follow-up queries in chat_history.db as user messages.
     """
-
-    # Fetch client details
     try:
         conn_client = sqlite3.connect("potential_clients.db")
         cursor_client = conn_client.cursor()
@@ -163,7 +149,6 @@ def message_framer(name: str, followup_query: str = "") -> str:
     except Exception as e:
         return f"Failed to fetch client data for {name}: {e}"
 
-    # Fetch crafts info (images + metadata)
     try:
         conn_craft = sqlite3.connect("images.db")
         cursor_craft = conn_craft.cursor()
@@ -175,28 +160,24 @@ def message_framer(name: str, followup_query: str = "") -> str:
 
     if not crafts:
         return f"No crafts found to reference."
-
-    # Match most relevant craft based on reason
+    
     reason_lower = reason.lower()
     best_match = None
     best_score = 0
 
     for image_blob, metadata_json in crafts:
-        # Safe JSON parsing with error handling
         try:
             if metadata_json is None or metadata_json == "":
                 metadata = {}
             else:
                 metadata = json.loads(metadata_json)
                 
-            # Ensure metadata is a dictionary
             if not isinstance(metadata, dict):
                 metadata = {}
                 
         except (json.JSONDecodeError, TypeError) as e:
             metadata = {}
         
-        # Extract fields safely with default values
         fields = [
             str(metadata.get("type", "")),
             str(metadata.get("style", "")),
@@ -206,17 +187,14 @@ def message_framer(name: str, followup_query: str = "") -> str:
             str(metadata.get("handcrafted", ""))
         ]
         
-        # Calculate match score
         match_score = sum(1 for field in fields if field.lower() and field.lower() in reason_lower)
         if match_score > best_score:
             best_score = match_score
             best_match = (image_blob, metadata)
 
-    # Use best match or fallback to first craft
     if not best_match:
         try:
             image_blob, metadata_json = crafts[0]
-            # Apply same safe parsing for fallback
             if metadata_json is None or metadata_json == "":
                 metadata = {}
             else:
@@ -229,14 +207,12 @@ def message_framer(name: str, followup_query: str = "") -> str:
     
     image_blob, metadata = best_match
 
-    # Extract product details with safe defaults
     style = metadata.get("style", "unique")
     material = metadata.get("material", "premium material")
     estimated_size = metadata.get("estimated_size", "standard size")
     handcrafted = metadata.get("handcrafted", "yes")
     color = metadata.get("color", "classic tone")
 
-    # LLM-based message framing
     product_details = f"""
     Client Name: {name}
     Product Details:
@@ -253,7 +229,7 @@ def message_framer(name: str, followup_query: str = "") -> str:
         prompt = f"""
         You are a creative marketing assistant.
 
-        Using the following client and product details, write a short(2-3 lines), friendly, and attractive message that encourages the client to explore the product:
+        Using the following client and product details,type write a short(2-3 lines), friendly, and attractive message that encourages the client to explore the product:
 
         {product_details}
 
@@ -295,7 +271,7 @@ def message_framer(name: str, followup_query: str = "") -> str:
 
         A client named {name} has asked: "{followup_query}"
 
-        Using ONLY the following product details, answer clearly and directly in 2-3 lines:
+        Using ONLY the following product details,type answer clearly and directly in 2-3 lines:
         - Material: {material}
         - Style: {style}
         - Color: {color}
@@ -305,8 +281,6 @@ def message_framer(name: str, followup_query: str = "") -> str:
         Focus strictly on answering the query using these details. Avoid any extra commentary. Do not add greetings or conclusions.
         """
 
-
-    # Generate message using LLM
     try:
         message = client.chat.completions.create(
             model="gpt-4o",
@@ -335,7 +309,6 @@ def image_sender_tool(name: str, agent_message: str) -> str:
     table_name = f"chat_{name.lower().replace(' ', '_')}"
 
     try:
-        # Load client chat history database
         conn_chat = sqlite3.connect("chat_history.db")
         cursor_chat = conn_chat.cursor()
 
@@ -348,10 +321,8 @@ def image_sender_tool(name: str, agent_message: str) -> str:
             )
         """)
 
-        # Tokenize agent's message
         tokens = set(word.lower() for word in agent_message.split())
 
-        # Load crafts database
         conn_craft = sqlite3.connect("images.db")
         cursor_craft = conn_craft.cursor()
         cursor_craft.execute("SELECT image, metadata FROM images")
@@ -367,7 +338,6 @@ def image_sender_tool(name: str, agent_message: str) -> str:
             except json.JSONDecodeError:
                 metadata = {}
 
-            # Collect metadata fields as lowercase words
             fields = [
                 str(metadata.get("type", "")),
                 str(metadata.get("style", "")),
@@ -378,7 +348,6 @@ def image_sender_tool(name: str, agent_message: str) -> str:
             ]
             field_tokens = set(word.lower() for field in fields for word in field.split())
 
-            # Score: count overlaps between metadata tokens and message tokens
             match_score = len(tokens.intersection(field_tokens))
 
             if match_score > best_score:
@@ -386,10 +355,8 @@ def image_sender_tool(name: str, agent_message: str) -> str:
                 best_match = image_blob
 
         if not best_match:
-            # No matching image found
             return "NULL"
 
-        # Store image as agent's message 
         cursor_chat.execute(f"""
             INSERT INTO {table_name} (sender, message, image)
             VALUES (?, ?, ?)
@@ -431,7 +398,6 @@ def sender_tool(name: str, message: str) -> str:
         )
     """)
 
-    # Store agent message
     cursor.execute(f"""
         INSERT INTO {table_name} (sender, message ,image)
         VALUES (?, ? ,?)
@@ -440,7 +406,6 @@ def sender_tool(name: str, message: str) -> str:
     conn.commit()
     conn.close()
 
-    # Simulate sending 
     print(f"\nAgent to {name}: {message}\n")
 
     return "Agent message sent to user and stored."
@@ -484,12 +449,14 @@ async def ask_agent(prompt: str) -> str:
     return result.final_output.strip() if result.final_output else "No response generated."
 
 async def ask_agent_streaming(prompt: str):
-    """Enable streaming from Runner"""
+    """Stream only function/tool call events from Runner."""
     try:
         result = Runner.run_streamed(agent, input=prompt)
         async for event in result.stream_events():
-            yield event
-            
+            if hasattr(event, 'type') and event.type == "run_item_stream_event":
+                if hasattr(event, 'item') and hasattr(event.item, 'type') and event.item.type == "tool_call_item":
+                    yield event  
+
     except Exception as e:
         st.error(f"Streaming error: {e}")
         result = await Runner.run(agent, prompt)

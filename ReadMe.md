@@ -40,11 +40,8 @@ pip install -r requirements.txt
 
 ### 4️⃣ Set Environment Variables
 
-Create a `.env` file in your project root and add your OpenAI API Key:
-
-```
-OPENAI_API_KEY=your-openai-api-key
-```
+no need to create .env file 
+OPENAI API KEY will be asked to fill once application is run
 
 ### 5️⃣ Ensure Databases Exist
 
