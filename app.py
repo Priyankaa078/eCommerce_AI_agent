@@ -185,8 +185,9 @@ with tab1:
 
     status_placeholder = st.empty()
     response_placeholder = st.empty()
+    send = st.button("Send")
 
-    if user_query:
+    if send and user_query:
         st.session_state["craftsman_chat_history"].append(("user", user_query))
 
         response = safe_async_run(stream_agent(user_query, status_placeholder))
@@ -229,8 +230,9 @@ with tab2:
     st.subheader("Send Message to Agent")
 
     user_query1 = st.text_input(" ", key="dummy_input")
+    query = st.button("Send Query")
 
-    if user_query1:
+    if query and user_query1:
         user_query_dummy = f"Hardik Sharma replied with: {user_query1}"
         status_placeholder = st.empty()
 
