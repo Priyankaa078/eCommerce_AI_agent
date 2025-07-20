@@ -52,7 +52,6 @@ async def stream_agent(user_query, status_placeholder=None):
     return final_response
 
 
-
 def safe_async_run(coro):
     try:
         loop = asyncio.get_event_loop()
@@ -70,7 +69,7 @@ init_db()
 st.set_page_config(page_title="Sales Agent", layout="centered")
 tab1, tab2 = st.tabs(["Craftsman interface", "Dummy user interface"])
 
-# ---------------------- Tab 1: Craftsman Interface ----------------------
+# Tab 1: Craftsman Interface
 with tab1:
     st.header("Upload Handicraft Images")
 
@@ -92,7 +91,7 @@ with tab1:
     else:
         st.info("No images uploaded yet.")
 
-    # ---------- Divider: Potential Clients Section ----------
+    #  Divider: Potential Clients Section
     st.divider()
     st.header("Potential Clients")
 
@@ -138,7 +137,7 @@ with tab1:
     else:
         st.info("No potential clients found.")
 
-    # --- Chat Popup View ---
+    #  Chat Popup View
     if st.session_state["open_chat"]:
         name = st.session_state["open_chat"]
         chats = fetch_chat_history(name)
@@ -174,7 +173,7 @@ with tab1:
         if st.button("Close Chat Window"):
             st.session_state["open_chat"] = None
 
-    # ---------- Divider: AI Agent Interface ----------
+    #  Divider: AI Agent Interface
     st.divider()
     st.header("Ask the AI Agent")
 
@@ -195,7 +194,7 @@ with tab1:
 
         status_placeholder.empty()
 
-# ---------------------- Tab 2: Dummy User Interface ----------------------
+# Tab 2: Dummy User Interface
 with tab2:
     st.title("🧵 Chat with Sales Agent")
 
